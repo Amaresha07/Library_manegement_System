@@ -28,12 +28,11 @@ type User struct {
 }
 
 type Book struct {
-	BookID   int    `json:"book_id"`
-	Title    string `json:"title"`
-	Author   string `json:"author"`
-	Year     int    `json:"year"`
-	Count    int    `json:"count"`
-	CoverURL string `json:"cover_url"`
+	BookID int    `json:"book_id"`
+	Title  string `json:"title"`
+	Author string `json:"author"`
+	Year   int    `json:"year"`
+	Count  int    `json:"count"`
 }
 
 var DB *sql.DB
@@ -45,8 +44,21 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	var exists bool
+	err := DB.QueryRow("SELECT EXISTS(SELECT 1 FROM admin WHERE name=$1)", loginUser.Name).Scan(&exists)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
 
-	_, err := DB.Exec("INSERT INTO admin (name, password) VALUES($1, $2)", loginUser.Name, loginUser.Password)
+	if exists {
+		// Email already registered
+		w.WriteHeader(http.StatusConflict) // 409 Conflict
+		json.NewEncoder(w).Encode(map[string]string{"message": "Account already exists. Please log in."})
+		return
+	}
+
+	_, err = DB.Exec("INSERT INTO admin (name, password) VALUES($1, $2)", loginUser.Name, loginUser.Password)
 	if err != nil {
 		http.Error(w, "Failed to insert user", http.StatusInternalServerError)
 		return
@@ -86,7 +98,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 func getbooks(w http.ResponseWriter, r *http.Request) {
 
-	rows, err := DB.Query("SELECT book_id, title, author,year, count,cover_url FROM books")
+	rows, err := DB.Query("SELECT book_id, title, author, year, count FROM books")
 	if err != nil {
 		http.Error(w, "Unable to get books", http.StatusInternalServerError)
 		return
@@ -321,7 +333,7 @@ func borrowBook(w http.ResponseWriter, r *http.Request) {
 
 	// Insert into borrowed_books
 
-	_, err = tx.Exec("INSERT INTO borrowed_books (usn,bookname, book_id) VALUES ($1, $2,$3)", usn, bookName, BookID)
+	_, err = tx.Exec("INSERT INTO borrowed_books (user_id,book_name, book_id) VALUES ($1, $2,$3)", usn, bookName, BookID)
 	if err != nil {
 		fmt.Println(err)
 		http.Error(w, "Failed to record borrowing", http.StatusInternalServerError)
@@ -340,7 +352,7 @@ func borrowBook(w http.ResponseWriter, r *http.Request) {
 }
 func returnBook(w http.ResponseWriter, r *http.Request) {
 	var returnRequest struct {
-		Usn      string `json:"usn"`
+		User_id  string `json:"user_id"`
 		BookName string `json:"bookname"`
 		BookID   int    `json:"book_id"`
 	}
@@ -350,14 +362,19 @@ func returnBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println("User ID:", returnRequest.User_id)
+	fmt.Println("Bookname:", returnRequest.BookName)
+	fmt.Println("Book ID:", returnRequest.BookID)
+
 	tx, err := DB.Begin()
 	if err != nil {
 		http.Error(w, "Transaction error", http.StatusInternalServerError)
 		return
 	}
 
-	_, err = tx.Exec("DELETE FROM borrowed_books WHERE usn = $1 AND book_id = $2", returnRequest.Usn, returnRequest.BookID)
+	_, err = tx.Exec("DELETE FROM borrowed_books WHERE book_id = $1", returnRequest.BookID)
 	if err != nil {
+		http.Error(w, "Failed to delete borrowed book", http.StatusInternalServerError)
 		tx.Rollback()
 		return
 	}
@@ -396,7 +413,7 @@ func Loginuser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var storedpassword string
-	err := DB.QueryRow("SELECT password FROM users5  WHERE usn =$1", loginUser.Usn).Scan(&storedpassword)
+	err := DB.QueryRow("SELECT password FROM users  WHERE usn =$1", loginUser.Usn).Scan(&storedpassword)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusInternalServerError)
 		return
@@ -431,7 +448,7 @@ func Registeruser(w http.ResponseWriter, r *http.Request) {
 	// fmt.Println(loginUser)
 	// fmt.Println("Received:", loginUser.Usn, loginUser.Name, loginUser.Password)
 
-	_, err := DB.Exec("INSERT INTO users5 (usn,name, password) VALUES($1, $2,$3)", loginUser.Usn, loginUser.Name, loginUser.Password)
+	_, err := DB.Exec("INSERT INTO users (usn,name, password) VALUES($1, $2,$3)", loginUser.Usn, loginUser.Name, loginUser.Password)
 	if err != nil {
 		http.Error(w, "Failed to insert user", http.StatusInternalServerError)
 		return
@@ -445,7 +462,7 @@ func Registeruser(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	db, err := sql.Open("postgres", "postgresql://demo_ub3u_user:TNVfdu2b716AGyj0wFfUzeK7BKB4GLMD@dpg-cus4n3qn91rc73dhmpvg-a.oregon-postgres.render.com/demo_ub3u")
+	db, err := sql.Open("postgres", "postgresql://demo_q32v_user:ZrxVTAR5BtwPLPQ1uWiG8LeMgExAueBg@dpg-cvhe31rtq21c73ea8d20-a.oregon-postgres.render.com/demo_q32v")
 	if err != nil {
 		log.Fatal("Database connection failed:", err)
 	}
@@ -473,7 +490,7 @@ func main() {
 	router.HandleFunc("/books/return", returnBook).Methods("POST")
 
 	corsHandler := handlers.CORS(
-		handlers.AllowedOrigins([]string{"http://localhost:5173"}), // Allow all origins (*), change this to specific frontend URL in production
+		handlers.AllowedOrigins([]string{"*"}), // Allow all origins (*), change this to specific frontend URL in production
 		handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}),
 		handlers.AllowedHeaders([]string{"Content-Type", "Authorization"}),
 		handlers.AllowCredentials(),
